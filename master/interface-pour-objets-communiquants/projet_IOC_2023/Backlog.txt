@@ -1,0 +1,33 @@
+ACL:
+
+esp32:
+esp32/x
+-	led		-> serv_web ==> esp
+-	screen		-> //same
+-	setup		-> bdd ==> esp: answer to bdd/init
+------------
+/esp32/x/led, "y"  -  x = 0 || 1
+/esp32/x/screen, "message"
+/esp32/x/setup, "field1:value1#...#..."
+x == name (not INTEGER id) 
+================================
+
+bdd:
+bdd/
+-	save		-> esp ==> bdd: store samples
+-	get		-> serv_web ==> bdd: get samples
+-	init		-> esp ==> bdd: get last samples to setup
+------------
+bdd: clients[] : (name,id)
+
+bdd/save, "name#field1:value1#...#..."
+bdd/get, "name"
+bdd/init, "name"
+=======================
+
+serveur(http-js):
+serv/
+-	data		-> bdd ==> serv_web: get samples
+------------
+serv/data, "field1:value1#...#..." OR "Error" (error or not found)
+	for fieldX = pres:Y, bdd script will next send Y messages "id#val#date" (from old to new)

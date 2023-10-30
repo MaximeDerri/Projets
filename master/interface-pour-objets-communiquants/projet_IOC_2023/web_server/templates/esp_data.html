@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>ESP {{espId}}</title>
+</head>
+<body>
+	<h1><a href="/">Projet IOC</a> - ESP<span id="espID">{{espId}}</span></h1>
+	<h2>Photores actuel: <span id="photoresValue">{{pres_val}}%<span></h2>
+	<h2>Comptage bouton poussoir : <span id="bpValue">{{bp_val}}</span></h2>
+	<h2>LED : <span id="ledValue">{{led_val}}</span> <button onclick="toggleLed()">Allumer/Eteindre</button> </h2>
+	<h2>LCD : <input type="text" id="lcdInput"> <button onclick="writeLcd()"><span id=textBouton>Ecrire</span></button></h2>
+	  
+	<script>
+		function refreshPhotoresValue() {
+			var espId = document.getElementById("espID").textContent;
+
+			fetch('/getPres?id=' + espId)
+				.then(response => response.json())
+				.then(data => {
+					document.getElementById('photoresValue').innerText = data.pres_val;
+				});
+		}
+
+    	function refreshBpCount() {
+      		var espId = document.getElementById("espID").textContent;
+
+			fetch('/getBp?id=' + espId)
+				.then(response => response.json())
+				.then(data => {
+					document.getElementById('bpValue').innerText = data.bp_count;
+				});
+		}
+
+		function getLed() {
+			var espId = document.getElementById("espID").textContent;
+
+			fetch('/getLed?id='+espId)
+				.then(response => response.json())
+				.then(data => {
+					document.getElementById("ledValue").innerText = data.value;
+				})
+		}
+
+		// Fonction pour inverser la valeur de la LED
+		function toggleLed() {
+			var espId = document.getElementById("espID").textContent;
+			var ledValue = document.getElementById('ledValue');
+
+			data = {
+				new_led_val : -1
+			};
+
+			if (ledValue.innerHTML === '1') {
+				ledValue.innerHTML = '0';
+				data.new_led_val = 0;
+			} else {
+				ledValue.innerHTML = '1';
+				data.new_led_val = 1;
+			}
+
+			fetch('/setLed?id=' + espId, {
+					method: 'POST',
+					headers: {
+					'Content-Type': 'application/json'
+					},
+					body: JSON.stringify(data)
+				}) 
+		}
+
+		// Fonction pour afficher la valeur de LCD
+		function writeLcd() {
+			var espId = document.getElementById("espID").textContent;
+			var lcdValue = document.getElementById('lcdInput').value;
+
+			data = {
+				new_lcd_val : lcdValue
+			};
+
+			fetch('/setScreen?id=' + espId, {
+				method: 'POST',
+				headers: {
+				'Content-Type' : 'application/json'
+				},
+				body: JSON.stringify(data)
+			})
+			.then(response => {
+				if (response.ok){
+					document.getElementById("lcdInput").textContent = "Réussit";
+				} else {
+					document.getElementById("lcdInput").textContent = "Erreur";
+				}
+			})
+			
+		}
+
+		
+
+		getLed();
+    	setInterval(refreshPhotoresValue, 250);
+    	setInterval(refreshBpCount, 250);
+	</script>
+</body>
+</html>

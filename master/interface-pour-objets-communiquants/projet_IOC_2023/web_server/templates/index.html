@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Index</title>
+</head>
+<body>
+    <div><h1><a href="/">Projet IOC</a> - Index</h1></div>
+    <p>Site du projet d'IOC pour Maxime Derri et Francois Ndlt. </p>
+    <div><h2>Liste des ESPs et leur état : <h2><div>
+    <table>
+        <thead>
+            <tr>
+            <th>Id</th>
+            <th>State</th>
+            </tr>
+        </thead>
+        <tbody>
+              <tr>
+                <td><a href="/esp?esp_id=1">1<a></td>
+                <td><span id = esp1_state>{{esp1_state}}</span></td>
+              </tr>
+              <tr>
+                <td><a href="/esp?esp_id=2">2<a></td>
+                <td><span id = esp2_state>{{esp2_state}}</span></td>
+              </tr>
+          </tbody>
+</body>
+<script>
+  function refreshSates() {
+
+			fetch('/getState')
+				.then(response => response.json())
+				.then(data => {
+					document.getElementById('esp1_state').innerText = data[0];
+          document.getElementById('esp2_state').innerText = data[1];
+				});
+		}
+
+  setInterval(refreshSates, 1000);
+</script>
+
+</html>
