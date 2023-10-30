@@ -1,0 +1,194 @@
+Exercice 1
+
+1) on copie les fichiers et on compile avec make, puis on copie dans /share avec cp, le .ko
+
+
+2) Le kernel récupéré sur les machines de la salle 508 ne possède pas dans /lib/module, de fichiers pour sa version, tout comme notre machine personnelle (uname -r)...
+J'ai donc modifié le Makefile en lui donnant un chemin absolue vers les sources du kernel que j'avais récupéré de la salle 508 par scp.
+
+
+Après insertion avec insmod, le module est bien chargé:
+[root@pnl share]# insmod helloWorld.ko 
+[ 1478.603464] Hello, world
+[root@pnl share]# lsmod
+Module                  Size  Used by
+helloWorld             16384  0
+[root@pnl share]# rmmod helloWorld 
+[ 1488.872523] Goodbye, cruel world
+
+
+On peut lire "Hello world" avec la commande d'insertion (ici, insmod), avec dmesg, 
+cat /proc/kmsg
+(syslogd et /var/log/messages ne semblent pas être sur le noyau du tp)
+
+
+3) trace:
+[root@pnl share]# insmod helloWorldParam.ko whom=julien howmany=3
+[ 4422.572012] (0) Hello, julien
+[ 4422.572187] (1) Hello, julien
+[ 4422.572352] (2) Hello, julien
+[root@pnl share]# rmmod helloWorldParam 
+[ 4431.739276] Goodbye, julien
+
+
+4) trace:
+[root@pnl share]# modinfo helloWorldParam.ko
+filename:       /share/helloWorldParam.ko
+license:        GPL
+author:         Maxime Derri
+description:    module qui prend des params
+HELLO WORLD
+
+depends:        
+retpoline:      Y
+name:           helloWorldParam
+vermagic:       5.10.167 SMP mod_unload 
+parm:           whom:charp
+parm:           howmany:int
+
+
+5) J'ai ajouté deux fonctions de print (pour hello et bye).
+trace:
+[root@pnl share]# insmod helloWorldParam.ko whom=julien howmany=3
+[ 6104.610290] (0) Hello, julien
+[ 6104.610479] (1) Hello, julien
+[ 6104.610688] (2) Hello, julien
+[root@pnl share]# cd /sys/module/helloWorldParam/parameters/
+[root@pnl parameters]# ls
+howmany  whom
+[root@pnl parameters]# echo 6 > howmany 
+[root@pnl parameters]# echo "Damien" > whom
+[root@pnl parameters]# rmmod helloWorldParam 
+[ 6152.212837] (0) Hello, Damien
+[ 6152.212837] 
+[ 6152.213096] (1) Hello, Damien
+[ 6152.213096] 
+[ 6152.213333] (2) Hello, Damien
+[ 6152.213333] 
+[ 6152.213560] (3) Hello, Damien
+[ 6152.213560] 
+[ 6152.213786] (4) Hello, Damien
+[ 6152.213786] 
+[ 6152.214013] (5) Hello, Damien
+[ 6152.214013] 
+[ 6152.214244] Goodbye, Damien
+[ 6152.214244] 
+
+Les \n en trop sont du aux echo (et dans mes print je fais déjà un \n ==> deux retours à la ligne)
+
+
+
+Exercice 2
+
+1) on trouve dans le fichier utsname.h:
+la déclaration d'une structure uts_namespace,
+extern struct user_namespace init_uts_ns;
+
+et en cherchant un peu plus, on remarque que le fichier version.c inclue utsname.h, et initialise la structure.
+Aussi, on remarque l'utilisation de EXPORT_SYMBOL_GPL(init_uts_ns), donc la structure est accesible uniquement en utilisant la licence GPL
+NB: d'après les commentaires, init_uts_ns est dans un premier temps compilé avec __weak et ensuite sans (on remarque juste en dessous un include de version-timestamp.c qui déclare aussi init_uts_ns).
+
+2) et 3)
+Le champ sysname est dans une structure new_utsname, et est un tableau de __NEW_UTS_LEN (64) + 1 ('\0' ?)
+
+Il faut remettre le nom d'origine car il est utilisé ailleurs dans le noyau, et ces portions de code peuvent se baser sur le nom donné à l'initialisation (qui est ici "Linux")
+
+trace:
+[root@pnl share]# insmod uname.ko name=blabla
+[ 1946.313468] init mod uname init, name set to: blabla
+[root@pnl share]# uname
+blabla
+[root@pnl share]# rmmod uname 
+[ 1959.023429] init mod uname end - original name has been restored
+[root@pnl share]# uname
+Linux
+
+Le code utilise linux/string.h pour faire la sauvegarde et le changement de noms (memset, memcpy, strlen).
+
+
+
+Exercice 3
+
+1)
+Notes:
+on trouve dans linux/fs.h la déclaration du super block avec les attributs suivants:
+struct file_system_type *s_type
+uuid_t s_uuid
+
+
+s_uuid est une structure contenant un tableau d'octets (u8) de taille UUID_SIZE (16 -> 128 bits)    /   linux/uuid.h
+s_type est une liste chainée (attribut file_system_type *next) qui contient un attribut const char *name, donc son nom
+
+la fonction iterate_supers est écrite dans fs/super.c
+elle prends en paramère:
+- un pointeur de fonction f retournant void, et prenant en param struct super_block *, void *
+- void *arg, passé en paramère de f (le void *)
+
+En regardant dans les sources, iterate_supers n'est pas exporté, et donc ne sera pas accessible dans le module.
+Une solution est donc de rajouter la ligne EXPORT_SYMBOL_GPL(iterate_supers) dans fs/super.c.
+
+
+2) 
+
+Pour gérer les dates, on va ajouter deux champs de 64 bits dans la struct super_block:
+- une pour les secoudes: (u64)(ktime_get / 10^9)
+- une pour les millisecondes: (u64)(ktime_get() - (secondes*10^9))
+
+après chaque affichage, on remet à jour le contenue de ces variables dans les struct super_block
+
+Il faut aussi exporter put_filesystem dans fs/filesystems.c
+
+en faisant varier les insmod/rmmod, le temps des affichages semble correct.
+
+
+
+Exercice 4
+
+1) lsmod:
+[root@pnl share]# lsmod
+Module                  Size  Used by
+helloWorld             16384  0
+
+
+2) 
+On peut cacher le module de lsmod en le retirant de la list_head de la struct module.
+On accède à la structure actuelle du module par THIS_MODULE
+
+trace:
+
+[root@pnl share]# lsmod 
+Module                  Size  Used by
+[root@pnl share]# insmod hideModule.ko 
+[   25.530161] hideModule: loading out-of-tree module taints kernel.
+[   25.535504] let's hide !!!
+[root@pnl share]# lsmod
+Module                  Size  Used by
+[root@pnl share]# insmod helloWorld.ko 
+[   33.676806] Hello, world
+[root@pnl share]# lsmod
+Module                  Size  Used by
+helloWorld             16384  0
+[root@pnl share]# rmmod helloWorld 
+[   43.759803] Goodbye, cruel world
+[root@pnl share]# lsmod
+Module                  Size  Used by
+[root@pnl share]# 
+
+Le module est également caché de rmmod, car la commande ne fonctionne plus dessus.
+
+
+3) trace:
+[root@pnl share]# ls -l /sys/module/ | grep hideModule    
+drwxr-xr-x 5 root root 0 Feb 25 17:02 hideModule
+
+
+4) trace:
+[root@pnl share]# insmod hideModule.ko 
+[   22.402210] hideModule: loading out-of-tree module taints kernel.
+[   22.407108] let's hide !!!
+[   22.410266] still alive and I disapear
+[root@pnl share]# ls -l /sys/module/ | grep hideModule
+[root@pnl share]# 
+
+J'ai commencé par essayer list_del mais cela n'a pas fonctionné.
+En cherchant dans le code et sur stackoverflow, j'ai trouvé une fonction kobject_del qui retire la structure de la hiérarchie.

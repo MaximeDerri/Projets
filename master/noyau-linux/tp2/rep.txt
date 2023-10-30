@@ -1,0 +1,58 @@
+Exercice 1:
+
+1) Une solution pour parcourir en premier les commit majeur, serait d'ajouter dans les structures un autre pointeur de structure. Ces pointeurs permettraient de passer de version majeur en majeur,
+en pointant la première version majeur suivante.
+Cependant, lors d'une insertion/suppresssion, il peut être nécessaire de changer les valeurs de ces pointeurs: ajout d'une version majeur qui précède une version actuelle -> il faudra re-orienter les pointeurs
+vers la bonne structure. On peut gagner en efficacité sur le nombre de structure parcourus, cepdenant cette solution ne sera pas très portable (Il faudra changer les types...).
+
+2) remplacer les 2 attributs de la liste chainée par une struct list_head
+
+3) Après modifications, le resultat est identique, et plus compact.
+
+
+Exercice 2:
+
+1) il faut distinguer les deux cas: on regarde si le commit précédent possède un numero major different? si oui, alors on a inséré un nouveau major (donc on refait les liens pour major_list)
+sinon, il faut faire pointer la list major_parent vers la liste major_parent du premier commit du num major
+
+2) On cherche en premier le numero major en parcourant major_list.
+si le numero cherché n'est pas 0 et qu'on a pas trouvé de numero major correspondant, on termine.
+Sinon, il faut parcourir à partir du commit major précédement récupéré les versions minor
+
+
+Exercice 3:
+
+1) -g permet d'ajouter de l'information pour les outils de debug
+
+2) valgrind est un outil permettant d'analyser la mémoire pour trouver des fuites de mémoire (et indirectement, retrouver de possibles autres erreurs).
+On se rend compte que dans le code, nous n'avions ajouté aucun free() pour libérer la mémoire allouée avec malloc().
+On va donc implémenter la fonction freeHistory(struct history *h) qui va libérer les commits.
+
+* on prend en parametre l'historique car il faut aussi libérer sa mémoire.
+On ajoute egalement un free dans le test juste après l'appel à del_commit()
+
+
+Exercice 4:
+
+1) Cela ajoute plusieurs comparaisons et lignes de code
+
+2) On implemente deux fonctions d'affichages différentes, et à la création d'un commit, on lui assigne une fonction selon major/minor
+puis on modifie la fonction displayCommit pour appeler le pointeur de fonction des structures commit
+
+3) même principe mais avec l'extraction
+
+4) On initialise deux structure, une pour les versions minor et l'autre pour les major
+On aura donc 2 instances et les commits se partageront le pointeur, plutôt que chaque commit possède sa propre structure
+
+Le pointeur sera placé dans new_commit
+
+
+Exercice 5)
+
+1) On utilise malloc sans free quand c'est fini
+Mais ce qui pose ici problème, est le fait qu'on base les malloc et memcpy sur la valeur (size) donnée en paramètre.
+Dans les deux derniers tests, -1 est passé ce qui provoque des erreurs.
+
+2) Une solution est d'utiliser la taille des chaines plutôt que de passer par les paramètres
+(il y a un include de string.h, qui contient strlen() -> retourne la taille de la chaine sans compter le char null de fin \0)
+Au debut de la fonction, on peut faire: X_size = strlen(X)

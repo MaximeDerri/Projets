@@ -1,0 +1,162 @@
+Exercice 1
+
+1) La VM se lance, commence à charger Linux mais se bloque sur "initial ramdisk".
+
+2) utiliser les commandes présentés.
+
+3) Après modification des variables et en étant sous root, la machine se lance et ne demande pas le mot de passe.
+
+
+
+Exercice 2
+
+1) Une fois l'interface lancée, nous pouvons trouver les options de débogage dans la catégorie "kernel hacking".
+
+2) On peut utiliser:
+-   cat /proc/cpuinfo
+-   lscpu
+
+Pour utiliser au mieux les ressources de la machines, il faut:
+- Permettre à la compilation d'utiliser plusieurs cours/threads ( -j)
+- Ne pas donner une valeur plus grande que le nombre de coeurs/threads disponibles...
+
+3) Pour la compilation, il ne faut pas oublier d'avoir générer le .config (après make nconfig).
+==>     arch/x86/boot/bzImage: Linux kernel x86 boot executable bzImage, version 5.10.167 (hellyiard@Laptop-md-gs66) #2 SMP Sat Feb 18 02:53:25 CET 2023, RO-rootFS, swap_dev 0XA, Normal VGA
+
+4) Après modification du script, la VM démarre correctement.
+-   uname -r    =   5.10.167
+Nous n'avons que peu d'information donc on ne peut pas forcement être sur qu'il s'agit du noyau pour la VM.
+
+5) "general setup > local version" - "append to kernel release"
+-   uname -r    =   5.10.167-pnl
+
+6) On utilise lsmod mais la commande ne nous montre aucun module chargés.
+"enable loadable module support" > "forced module loading true" "module unloading false"
+
+
+
+Exercice 3
+
+1) On peut utiliser emacs depuis la VM pour écrire les quelques lignes.
+
+2) Il faut ajouter modifier CMDLINE.
+==>     CMDLINE="root=/dev/sda1 rw console=ttyS0 kgdboc=ttyS1 init=/hello"
+
+3) voici une partie de la trace:
+[    0.783301] Run /hello as init process
+Hello World
+[    5.788091] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000000
+...
+PANIC: Attempted to kill init! exitcode=0x00000000
+
+Le système fini par crasher par un kernel panic: comme hello (init) se termine après 5 seconde, il n'y a plus rien à faire après. Le système n'avait pas prévue cela, car init est censé
+perdurer pendant que le système est utilisé, et init est le père de tous les processus.
+
+4) On peut mettre init=/bin/sh.
+lancer des commandes comme:
+-   ls
+-   ./hello
+fonctionnent
+
+quand on fait ps:
+Error, do this: mount -t proc proc /proc
+
+Cela ne fonctionne pas car le programme init "de base" est censé effectuer une suite d'actions et initialiser une suite de processus pour le système, qui n'est ici pas fait.
+
+5) d'après la question précédente et la trace, il nous est conseillé de faire:
+-   mount -t proc proc /proc
+qui permet ensuite d'utiliser ps aux et pstree 0.
+Cependant, le shell reste lié à init et lancer la commande exit provoque un kernel panic.
+
+6) il faut faire utiliser la commande exec, qui va remplacer le bash par l'instance du programme.
+Visiblement, le système ne peut accepter ./ car le système n'a pas été boot avec systemd
+on utilise donc:
+-  exec /bin/init   (/sbin/init fonctionne aussi)
+
+
+
+Exerice 4
+
+1) unmkinitramfs /boot/initrd.img-5.15.0-60-generic /tmp/test/
+
+2) initramfs est chargé en mémoire au démarrage du noyau Linux pour préparer la mise en place du vrai système de fichier.
+Pour pouvoir être utilisé, il doit être placé en mémoire dans un endroit accessible au démarrage. Donc il doit être toujours au même endroit.
+-static permet de faire des bibliothèques statiques, mais empèche également le pie (position indépendant code).
+
+
+
+ à ce moment la, la libc n'est pas encore chargée donc il faut le forcer avec static
+
+
+
+
+3) on créer un répertoir /tmp/racine et on y créer un fichier pour hello world.
+-   gcc -static -o init init.c 
+-   find . | cpio -o -H newc | gzip > ../my_initramfs.cpio.gz
+
+4) on modifie le script en ajoutant avant append:
+-   -initrd "{INITRD}" ...
+avec INITRD="/home/hellyiard/Cours/Master/Master1/cours/PNL/td-tp/tp3/my_initramfs.cpio.gz"
+
+en lancant le script qemu-run-externKernel.sh:
+[    0.794476] Run /init as init process
+Hello World
+[    5.795284] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000000
+...
+PANIC: Attempted to kill init! exitcode=0x00000000
+
+
+
+Exercice 5
+
+1) produit un SIGALRM toutes les 3 secondes (rappelé par handle_sigalrm).
+exit seulement quand on écrit 'e'.
+
+2) Après modification du Makefile, le résultat de l'executable n'a pas changé.
+Si on change la fonction, elle est bien prise en compte aussi.
+Il pourrait être préférable d'utiliser deux Makefiles:
+- un qui génère la lib dynamique
+- un qui compile le reste et assemble l'executable
+
+Cela permet de ne pas mélanger trop d'options différentes, et d'organiser en sous-répertoir le code
+(dans cette exercice il s'agit d'étudier les bibliothèques dynamiques, et il y a peu de fichiers donc je ne l'ai pas fait)
+
+3) L'utilisation de bibliothèques dynamiques permet de "charger" le code (partagé) quand
+il est demandé à l'execution. Cela implique de devoir ajouter des éléments dans le processus
+au cours de l'execution.
+Donc, la zone possède un droit en écriture: possible problème de sécurité
+(On peut forcer le chargement dès le début de l'execution et le changement de droits avec des options à la compilation)
+
+Le but ici est de redirigé l'appel à read() vers notre propre implémentation.
+On modifie le Makefile pour créer une nouvelle bibliothèque dynamique à partir de hack.c
+Notre nouveau read() placera dans le buffer 'e' qui provoquera la fin du while (puis du processus)
+==>
+LD_PRELOAD=./libread.so ./cron_func 
+---
+Enter : (i) insert (r) remove (e) end
+Tchao !!!
+
+4) On doit utiliser dlsym(RTLD_NEXT, "read), et donc définir la macro #define _GNU_SOURCE
+pour y avoir accès.
+
+Si on essaie d'appeler depuis notre read() le "vrai" read(), alors le dynamic linker va
+se rendre compte qu'on essaie d'ajouter une deuxième fois un même symbole de fonction.
+Et cela ne devrait pas être possible.
+
+Utiliser dlsym avec RTLD_NEXT va forcer à aller chercher l'adresse en mémoire de l'autre read().
+Il faut donc le stocker avec un pointeur de fonction.
+
+Dans le Makefile, on ajoute une règle de compilation pour libread.so afin de compiler
+notre fichier hack.c avec une bibliothèque (-ldl).
+
+Quand on execute, le comportement est bien celui attendu au niveau des 'r' et 'i'.
+
+5) 
+- on peut utiliser des bibliothèques statiques  ==>  duplique le code et force tout le contenu à être
+dans l'executable
+- On peut vérifier avec getenv() si LD_PRELOAD est utilisé, mais cela peut empêcher son utilisation.
+Il faudrait vérifier ce que contient la variable, ou terminer le processus.
+- utiliser les fonctionnalités liés à LD_AUDIT, pour écouter les évenements des bibliothèques dynamiques.
+Cela complexifie le code et il faudra ajouté cela dans une bibliothèque dynamique, qui doit être incluse.
+
+6)
