@@ -1,0 +1,1 @@
+Ce repertoire contient le fichier .so produit
