@@ -1,0 +1,10 @@
+#! /bin/bash
+
+#Compile server
+javac --source-path src/ -d build src/server/*.java
+
+#Former client launcher
+#make -sC src/client/
+#./src/client/client "$@"
+
+java -cp build src.server.Launcher "$@"
