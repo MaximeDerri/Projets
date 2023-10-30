@@ -1,0 +1,145 @@
+Exercice 1
+
+1) j'ai juste ajouté la list_head qui n'était pas nécessaire au dernier tp.
+
+
+2) On doit penser à initialiser les nouvelles structures (mutex, list) dans l'init, et appeler save_sample dans la fonction exécuté par le thread.
+J'ai préféré utiliser kzalloc qui appel kmalloc et initialise le champ avec des 0.
+
+
+3) on fait un list_for_each_entry_reverse, on place dans un tampon la chaine et on vérifie sa taille (savoir si il faut continuer à print dans le sysfs).
+Quand c'est fini ou qu'il n'y a plus de place, on peut quitter la fonction
+
+Une autre solution serait de remplir le buffer de la fin au début, en plaçant les plus récentes infos en premier.
+
+
+4) On parcours la liste avec une version safe des list_for_each et on fait kfree + list_del.
+
+
+
+Exercice 2
+
+1) Il faut implémenter les pointeurs de fonctions définis dans la structure shrinker.
+Les fonctions à implémenter sont:
+* count_objects, qui compte le nombre d'objets qui peuvent être libérés ou SHRINK_EMPTY si il n'y en a pas.
+* scan_objects, qui va chercher les objets et les libérer. Il retourne le nombre d'objets libérés pendant le scan
+ou SHRINK_STOP si jamais une deadlock est détectée.
+
+
+2) on implémente les deux fonctions.
+* count va vérifier si le nombre de task_sample dépasse la taille fourni par une macro que j'ai définis
+* scan va parcourir la liste dans le sens inverse et supprimer les plus anciennes infos enregistrés.
+
+
+3) Le shrinker est bien utilisé, cependant il semble que la fonction qui compte les objets place dans nr_to_scan constament 128, et pas la valeur que je retourne.
+
+
+
+Exercice 3
+Références: Linux Kenel Development et kernel.org principalement (+ un peu le lien dans l'exo du TP)
+
+1) La taille retourné est la quantitée de mémoire allouée par kmalloc (qui est une puissance de 2, et il faut prendre en compte quelques octets en plus pour la gestion).
+
+
+2) Le slab layer dispose de 3 implémentations différentes (on utilisera ici le SLAB, les deux autres sont SLOB et SLUB).
+Quand on demande d'allouer de la mémoire, il faut initialiser / allouer et plus tard rendre la mémoire, ce qui peut demander un peu de temps au système.
+Le principe du slab layer est d'améliorer les performances dans le cas où on alloue / libère plusieurs fois de la mémoire liée à des objets de même type.
+Un cache est crée, dans le quel est disposé 3 listes: full, partiale et empty.
+Les caches sont contenues dans une liste doublement chainée circulaire.
+La mémoire est allouée par page en tant que "empy", et chaque demande d'allocation est géré par cette / ces pages (il peut y en avoir plusieurs si suffisament de mémoire à été rendu).
+Si il existe donc des places libres, le système donne directement un accès à cette place plutôt que de regénérer une place.
+Quand on souhaite libérer cette ressource, la place est rendu disponible pour d'autres demande de place.
+Ce qu'on appel "slab" est un nombre de page (1 ou plus) contigue. Chaque liste possède donc une slab (voir schéma de kernel.org - slab allocator).
+
+Le but du slab layer est donc de réduire la fragmentation de la mémoire, et augmenter les performances pour l'allocation mémoire.
+
+
+3) On implémente l'initialisation et la destruction du cache, ainsi que la nécessitée de rendre les place et libérer les places du cache.
+On doit donc aussi modifier le shrinker. Cependant, afin de pouvoir se déplacer sur chaque objet et pouvoir les rendre, il faut garder la liste dans notre structure.
+
+Quand on souhaire détruire un cache, il faut déjà rendre toutes les cases (en passant par kmem_cache_free)
+
+
+
+Exercice 4
+
+1) L'idée de mempool est d'avoir un certain nombre de place pré-allouée, en cas de pression mémoire:
+Si il n'y a pas de pression, un objet est allouée normalement, dans le kmem_cache.
+Si il y a de la pression, un objet du pool de mémoire "d'urgence" sera retourné, si il en reste de libre.
+
+mempool utilise un kmem_cache.
+
+Il faut déclarer une structure mempool (mempool_t ou struct mempool_s) et l'initialiser avec mempool_create.
+On peut également changer la taille de mempool avec mempool_resize().
+
+Les fonctions à implémenter sont l'alloc et free, passés en paramètre de mempool_create().
+Comme la pool de mémoire utilise le slab allocator, on peut donc fournir mempool_alloc_slab et mempool_free_slab comme fonctions (voir la déclaration dans mempool.c)
+
+
+2) au lieu d'utiliser directement le slab layer, on délègue son utilisation à la mempool
+
+
+
+Exercice 5
+
+1) Nous pouvons utiliser:
+* kref_init pour initialiser la référence (à 1)
+* kref_get pour augmenter la référence de 1, de manière atomique
+* kref_put pour reduire la référence de 1 atomiquement. si la référence tombe à 0, la fonction fournie en argument est utilisée pour libérer l'objet.
+* on peut aussi utiliser kref_get_unless_zero pour éviter d'ajouter une référence si jamais la reference est à 0
+* container_of sera aussi utilisé pour récupérer la structure pour la libération.
+
+
+2) on implémente une nouvelle fonction qui libèrera la structure récupéré par container_of
+On doit aussi utiliser kref_put et kref_get_unless_zero pour l'affichage
+Pour l'exit module, pas besoin de passer par les kref car ce n'est pas une structure manipulée directement par le reste du système
+
+
+3) Il y en a 2: 1 à l'allocation et 1 pour l'affichage
+
+
+Exercice 6
+
+1) Le sysfs restreint chaque fichier à un attribut, la où ce n'est pas le cas avec le debugfs. De plus, le debugfs n'a pas de limite de taille (sysfs = une page -> PAGE_SIZE).
+Le debugfs est aussi plus simple à implémenter mais ne doit être utilisé que pour le debogage.
+
+On va devoir utiliser les fonctions:
+* debugfs_create_file
+* debugfs_remove
+L'énnoncé souhaite qu'on utilise directement debug/ : arch_debugfs_dir
+
+
+2) nous allons implémenter les structures:
+* seq_operations
+* file_operations
+
+Il faudra donc implémenter les fonctions de seq_operations et open file_operations
+Pour les fonctions de seq_operations, je me suis inspiré du module kmemleak.
+
+
+
+Exercice 7
+
+1) et 2) Voici les modifications que j'ai apporté:
+* j'ai ajouté une struct task_monitor avec un pid à -1 que je test afin d'esquiver (pour les parcours de liste). Elle remplace la list tasks de l'énnoncé, mais c'est dans le même principe.
+* J'ai donc ajouté des verifications pour éviter ce pid -1.
+* Comme chaque le monitoring de chaque processus se fait en même temps, j'ai décidé de sortir l'attribut size et de le mettre global. Cela simplifie la gestion du shrinker et au cas où il y ai un décalage de 1 temporairement, le parcours de liste avec
+list_for_each évitera un problème. Quand le shrinker doit faire de la place, je le fais pour chacun des processus. J'ai joué sur mes macro pour gérer la taille qu'on souhaite gardé en ce sens.
+
+* Le fait d'avoir un "bouchon" de pid -1 évite que le parcours de liste soit esquivé si jamais il n'y avait qu'un seul processus. En temps normal, on ne traitera pas ce pid mais j'ai quand même ajouté une vérification dessus au cas où. Par ailleurs,
+cette structure initiale est global et non allouée (donc il y a aussi des verifications sur le pid pour la libération).
+
+
+3) On s'inspire du module kmemleak et on ajoute 3 "commandes":
+* ajouter un pid
+* retirer un pid
+* choisir quel processus on souhaite consulter (pour éviter d'avoir trop d'infos d'un coup). Si jamais le pid n'est pas trouvé, alors on garde l'ancien.
+(commande = 'print' pid)
+
+
+NOTE: ceci a été discuté avec M.Sopena:
+
+J'ai laissé les kref mais je suis conscient du problème que leur utilisation pose dans ce TP:
+* On peut très bien avec une telle execution: le shrinker qui passe à 0 une reference 'ref', et le thread qui fait un get sur 'ref' -> erreur si passe à 0 | problème de réference d'un objet en cours de suppression.
+
+

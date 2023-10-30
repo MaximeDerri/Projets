@@ -1,0 +1,107 @@
+Exercice 1
+
+1) syscall n'est pas un appel système. son rôle est de sauvegarder les registres avant l'appel système, et les restore au retour. syscall déclanche l'appel système.
+syscall est une fonction/librairie qui peut être utilisée quand il n'y a pas de 'wrapper' d'un appel système (définie par ex par la glibc). la fonction prend en paramètre le numero
+de l'appel système et les arguments, et retourne une valeur renvoyée elle même par l'appel système. généralement 0 quand tout est bon et un code d'erreur négatif en cas de problème (+ errno).
+
+
+2) Pour SIGKILL: syscall(__NR_kill, getpid(), 9)
+
+
+3) voici comment procéder, pour ajouter un appel système complètement:
+* créer l'appel système avec la macro SYSCALL_DEFINEx, soit dans sys.c, soit dans un autre fichier qui doit être indiqué au Makefile principal SI celui si dépend d'un nouveau répertoire.
+* déclarer le prototype avec asmlikage dans le fichier incluse/linux/syscall.
+* ajouter l'entrée dans arch/x86/entry/syscalls/syscall_64.tbl, pour les architectures x86-64.
+* définir __NR_fun SI on souhaite être raccord avec les autres appels systèmes. Pour notre architecture, on a plus besoin de passer par __SYSCALL et déclarer __NR_fun, le fichier n'est
+plus présent. Autrement, on peut utiliser le numéro que l'on a indiqué dans syscall_64.tbl.
+* ajouter le 'fallback slub' dans kernel/sys_ni.c au cas où l'appel soit déclaré mais aucune fonction associée (va retourner -ENOSYS). Par exemple, si on desactive la fonction avec Kconfig
+* On peut modifier init/Kconfig si jamais on souhaite la fonction optionnelle (configurable).
+==> Pas nécessaire comme c'est ici une première implémentation, mais par curiosité je l'ai fait et ça fonctionne.
+
+
+4) Les deux pids affichés sont les même, ce qui est normal car le processus passe simplement en kernel land - c'est toujours le processus courrant.
+
+
+5) et 6) L'addresse générée semble correcte aux premiers abords si on laisse le module tourner et qu'on exécute la fonction avec l'adresse. Cependant le module est chargé en kernel land
+et l'adresse que le module nous donne est donc dans l'espace du noyau. Si on décharge le module, l'adresse provoquera un "oops" et le kernel s'arretera.
+Mais au dela du module, cela veut dire qu'on peut faire lire une donnée à un autre endroit dans le kernel...
+Pour remédier à ça, il faut utiliser une fonction qui peremt de tester si l'adresse passé en paramètre est dans l'espace d'adressage du processus.
+Et justement, copy_from_user le fait.
+Pour simplifier, je vais déclarer une macro pour une taille max de la chaine, et l'utilisateur devra également fournir la taille de sa chaine.
+
+
+7) Pour simplifier, on déclare une taille max d'un buffer interne au syscall et on écrit dans le buffer une taille qui dépend de ce buffer et de la taille de la destination (user), pour ne
+pas déborder. On utilise un buffer pour pouvoir tester les adresses et ne pas lire/ecrire à des adresses qui ne devraient pas être accédées.
+
+
+
+Exercice 2
+
+1)
+trace 1:
+[root@pnl share]# sleep 9000 &
+[root@pnl share]# ps
+    PID TTY          TIME CMD
+   1608 ttyS0    00:00:00 bash
+   1649 ttyS0    00:00:00 sleep
+   1650 ttyS0    00:00:00 ps
+[root@pnl share]# kill -18 1649
+[root@pnl share]# ps
+    PID TTY          TIME CMD
+   1608 ttyS0    00:00:00 bash
+   1649 ttyS0    00:00:00 sleep
+   1651 ttyS0    00:00:00 ps
+
+trace 2 (avec le module du TP8):
+même résultat, le processus reste accesible aux signaux (SIGCONT, SIGKILL, etc...)
+
+Par contre, si il n'existe pas on ent notifié par un retour différent de 0 (ici, echo $? affiche 1).
+
+On peut donc itérer sur les possibles valeurs des pid en envoyant un signal, et en fonction du code de retour on peut savoir si il existe ou non.
+
+
+2) strace ne semble pas être disponible sur le noyau du TP, j'ai donc du le faire sur mon OS principale qui n'a donc pas la même version...
+- openat
+- access
+- newfstatat
+- mmap
+- pread64
+- read
+- arch_prctl
+
+
+3) On peut retrouver les prototypes des appels systèmes dans le fichier linux/syscall.h. le code de ces appels système est placé dans différents fichiers, listés dans syscall.h.
+avec elixir.bootlin, on peut se déplacer dans les différents fichiers afin de trouver leur implémentation.
+
+J'ai vue dans le code du kernel (fichier syscall_64.tbl) que les fonctions __x64_sys_* étaient crées à la volée pour les fonctions sys_*.
+De plus, dans le fichier syscall_64.c, on vois que la table sys_call_table y est déclarée, et qu'elle dépend de l'adresse d'une fonction __x64_sys_ni_syscall.
+Ainsi, la première adresse de la table est liée à cette fonction.
+
+On peut aussi retrouver les adresses des fonctions du kernel dans le fichier /proc/kallsyms.
+
+
+4) Voici comment procéder:
+* PAGE_OFFSET semble marquer la limite entre le kernel land et user land
+* la table des appels systèmes contient des pointeurs vers les fonctions, donc c'est un pointeur de pointeur.
+* Il faut prendre un unsigned long qui commence à PAGE_OFFSET, qu'on va augmenter de 4 ou 8 octets selon l'architecture et on va cast la valeur en ** en essayant de retrouver
+l'adresse d'une fonction sys_X avec __NR_X. nous pourrons trouver l'adresse de la table ensuite.
+
+- La fonction en question est sys_close, mais d'après un article elle n'est plus exporté depuis la version 4.4.
+- Une autre solution est d'utiliser kallsyms_lookup_name, mais elle n'est également plus exporté.
+Autre solution pour par faire d'export:
+* récupérer l'adresse de sys_close par nous même et simuler la recherche.
+En x86_64, les fonctions à trouver sont __x64_sys_*, constuits à la volée.
+On va donc chercher dans /proc/kallsyms l'adresse de la fonction __x64_sys_close et la compter comme l'adresse de sys_close.
+
+
+5) Le kernel crash car cette partie de la mémoire est en lecture seul, il faudra donc modifier les droits d'accès
+
+
+6) wp              : yes
+
+
+7) Comme read/write_cr0 ne sont également pas disponible, en cherchant on trouve qu'on peut utiliser native_X à la place qui sont exportés. Sinon il faudrait faire en assembleur avec asm volatile.
+Quand on fait le changement, on peut effectivement écrire et lire.
+
+
+8) On reprend le module précédent et on fait la modification.

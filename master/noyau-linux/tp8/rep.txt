@@ -1,0 +1,123 @@
+Exercice 1
+
+1) pour appliquer le patch, il faut faire:
+* unxz tp8-linux-5.10.17.patch
+* patch -p1 < monPatch.patch		==> -p1 retire un niveau dans les chemins indiqués par le patch (je me suis donc placé à la racine des sources)
+
+Le patch a  ajouté / supprimé ceci dans fs/dcache.c:
+---
+-static struct hlist_bl_head *dentry_hashtable __read_mostly;
++struct hlist_bl_head *dentry_hashtable __read_mostly;
++EXPORT_SYMBOL(dentry_hashtable);
+---
+
+et dans linux/include/dcache.h:
+---
++/**
++ * @brief Export pour le TP-08
++ */
++extern struct hlist_bl_head *dentry_hashtable __read_mostly;
++
+---
+
+
+2) On a remarqué dans le patch que d_hash_shift était mentionné dans le fichier fs/dcache.c.
+Elle y est déclaré et en static, donc elle n'est pas dans un .h, il faut l'ajouter en 'extern' dans dcache.h et exporter le symbole depuis dcache.c
+Ensuite, on recompile le noyau.
+
+
+3) Du fait qu'on va comparer toute l'arborescence, toutes les modifications faites au cours des différents TPs seront chargés dans le patch (quelques symboles exportés par certaines questions).
+Comme je travail sur ma machine, je n'utilise pas /tmp pour ne pas avoir à recompiler à chaque TP, ce qui explique que d'autres fichiers soient mentionnés.
+Par contre, pour la comparaison j'ai décompressé une nouvelle version du noyau dans /tmp pour produire le patch.
+* cp linux-5.10.167.tar.xz /tmp/linux-tmp
+* tar -xvJf linux-tmp
+* diff -r -u /tmp/linux-5.10.167/ ../../src/kernel/linux-5.10.167/ > patch_tp8_pnl.patch
+
+
+
+Exercice 2
+
+1) On remarque que la fonction d_hash manipule la hliste avec la variable que l'on a rendu précédement visible, 'd_hash_shift'.
+En explorant le fichier, on remarque les fonctions dcache_init et dcache_init_early qui font un appel à alloc_large_system_hash, qui va ensuite préparer dentry_hash_table.
+Dans cette fonction, on remarque un pr_info affichant des infos, dont:
+* ("...entries: %ld...", ... 1UL << log2qty, ...), On peut retrouver cette information avec dmesg | grep entries.
+Au retour de la fonction, on a d_hash = 32 - d_hash_shift, mais en fait la fonction place dans d_hash_shift le log2 de la taille de la table.
+Donc pour avoir retrouver la taille, on peut faire:
+* 1 << (32 - d_hash_shift).
+
+
+2) on affiche l'adresse avec %p et on utilise le calcul précédent pour déterminer la taille.
+
+
+3) J'ai expérimenté un peu sur le parcours des dentry par la table de hachage:
+* J'ai découvert que depuis la VM, l'inode de /share semble lié au compteur d'inode de ma machine host (les id du /share et de l'image du tp3 sont les inode précédent (-1 / -2))
+* Cependant, comparé à l'inode affiché avec la commande ls -id /share (depuis la VM) et le parcours de la dentry_hashtable, les inode ne correspondent pas et l'inode affiché par le parcours
+de la table de hachage est beaucoup plus petit. Cependant, le dentry parent est bien "/";
+* Pour le parcours, j'itère sur dentry_hashtable + i avec un for et hlist_bl_for_each_entry.
+
+La taille de la table dépend de la capacitée mémoire et la taille est une puissance de 2. sur ma machine, la table est de taille 2^18. Elle est donc très grande
+(et réduit aussi le nombre de collisions). La plus grosse liste est de taille 4 mais est amené à changer au cours du temps d'execution de l'OS.
+
+4) Dans cette question, on implémente le procfs par 'Legacy procfs API', la taille d'un fichier est donc limité à PAGE_SIZE comme pour le sysfs.
+Pour la manipulation du procfs, j'ai utilisé proc_ops plutôt que file_operations, et proc_remove.
+
+On doit utiliser dans la fonction read: simple_read_from_buffer(), sinon l'écriture du même buffer à lieu plusieurs fois.
+Je ne comprend pas vraiment pourquoi ce comportement - j'ai cru comprendre sur stackoverflow que l'API à changé il y a quelque temps, et que cela serait peut-être du au flag
+EOF. Un autre poste dit également que la valeur de retour doit être en accord entre l'offset et le nombre d'octets lues.
+La fonction simple_read_from_buffer ferait le calcul à notre place, ce qui permettrait d'éviter l'affichage infini.
+
+
+5) Utiliser les seq_file permet de ne pas utiliser la fonction ci-dessus pour empêcher de boucler.
+single_open permet de n'appeler qu'une seul fois weasel_show sans avoir a definir de struct seq_operation.
+Ainsi, pas besoin de définir d'iterateur complet - on parcours juste la dentry_hashtable et on affiche
+le nom des entrées (si non NULL).
+
+
+6) Quand on execute une commande qui n'existe pas, le bash ne le détecte pas directement. Il faut pour cela aller chercher la commande dans son répertoire, et parcourant
+l'arborescence du système de fichier - selon PATH.
+A chaque descente dans l'arborescence, si le nom de fichier n'est pas dans le cache des dentry, alors il y est ajouté.
+Ensuite, des verifications ont lieu pour connaitre la validité du nom. Si le fichier n'existe pas, il est quand même gardé avec un inode à NULL
+pour éviter d'avoir à refaire tout le chemin en examinant la chaine (prend du temps).
+Donc, quand on tappe une commande qui n'existe pas, le système parcours chaque répertoire indiqué par le PATH pour essayer de trouver l'executable correspondant.
+On le remarque également si on modifie légèrement le programme: on affiche uniquement les dentry et le nom du parent si le nom stocké par le dentry correspond à notre fausse
+commande ==> plusieurs dentry sont retrouvés avec comme parent le dernier répertoir indiqué par chaque entrées de la variable PATH.
+
+7) D'après la question précédente, on peut retrouver les commandes en parcourrant dans le cache des dentry selon le parent.
+Une autre solution plus adaptée et moin penible est d'utiliser la fonction filp_open() (resp. filp_close), qui va parcourir l'arborescence selon le chemin qu'on lui donne, et retourne
+une struct file * correspondant (ou non). on peut ensuitre recupérer la dentry avec file_dentry().
+En utilisant ces methodes, on gagne de la place et de la complexité sur le parcours des dentry car il faudrait découper chaque sous chemin de $PATH et faire attention aux / et :.
+Nous donnerons en parametre du module, la variable PATH.
+
+Il reste maintenant la question de savoir si cette commande existe réellement ou non. Cela est faisable avec le champ d_inode des dentry
+qui est à NULL si le fichier n'existe pas ou si il a été supprimé.
+
+
+A JOUR:
+Je me suis rendu compte qu'en fait certaines commandes, même si elles existent, sont quand même affichés (inode NULL).
+En cherchant encore plus, j'ai trouvé dans namei.h la fonction kern_path qui va chercher si un chemin jusqu'a un fichier existe
+pour la version à jour, j'ouvre le répertoir du fichier correspondant, puis je parcours les dentry fils et je test avec kern_path si le chemin est trouvé.
+Si le retour est different de 0, alors le fichier n'existe pas et on passe à la prochaine entrée.
+La variable PATH permet d'implémenter le module de manière générique, plutôt que de chercher dans des répertoires spécifiques.
+
+Conclusions sur le parcours:
+* J'avais comme idée que si la "commande" apparaissait dans le dernier tronçon de PATH (...:..:end), alors elle n'existe pas.
+Après ces observations, c'est bien le cas, donc PATH est parcouru jusqu'a trouver le fichier.
+* J'ai vue dans un commentaire du kernel que l'utilisation de filp_open/close n'était pas forcement conseillé, sauf si il était vraiment
+important d'ouvrir le fichier. Ici, je m'en suis servis pour ne pas avoir a implementer une fonction dans l'idée d'un namei, où on cherche root (/)
+dans le dentry_hashtable et ensuite on descent dans les fils pour trouver ce qu'on cherche. Cela economise du temps, de la place et rend plus lisible le code.
+* Un inode à NULL ne signifie pas forcement qu'un fichier n'existe pas car j'ai retrouvé des noms de commandes existantes dans chacun des répertoirs pointé par PATH.
+Il a donc fallu aller verifier si le nom du fichier est trouvé, et ne pas se fier completement aux champs de dentry.
+
+* J'ai également fouiller dans l'arborescence des fichiers depuis la racine avec le module et le terminal pour voir les inodes, et j'ai
+mieux compris l'idée du VFS, avec plusieurs VFS qui ne partent pas forcément de / (comme /sys/kernel/debug et bien d'autres).
+La commande ls permet de voir leurs numéro d'inode et on retrouve plusieurs 1 / 2. J'ai également fait des affichages de l'adresse et du type des superblocs de certains
+dentry avec des inodes similaires.
+
+Exercice 3
+
+1) Je n'avais pas lu l'exercice 3 qui au final nous demande d'expérimenter la fonction filp_open. Je vais donc ne pas la faire comme je m'en suis servis à la question au dessus...
+
+
+2) L'idée est de rediriger la fonction iterate_shared et de dir_context. On fait des sauvegardes des anciennes fonctions / context pour les utiliser quand
+le pid n'est pas celui qu'on doit cacher (le fait de cacher est de retourner 0 pour ne pas l'afficher, sinon le comportement normal doit être effectué).
+Quand on quitte le module, on remet le comportement par defaut, en utilisant l'ancienne fonction sauvegardée.

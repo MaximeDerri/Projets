@@ -1,0 +1,422 @@
+Exercice 1
+
+1) Il faut activer l'option "KGDB: kernel debugger" et "KGDB_KDB: include kdb frontend for kgdb"
+
+
+2)
+-serial mon:stdio \
+-serial tcp::1234,server,nowait \
+
+     Le moyen choisi est donc un socket TCP sur le port 1234 (en localhost)
+
+
+3) on ajoute kgdbwait dans CMDLINE et on lance la VM
+ensuite dans gdb, il faut faire:
+target remove localhost:1234 OU tcp::1234 OU :1234
+
+
+4) monitor ps ressemble à la commande "ps" classique, elle affiche pid, ppid, etc... qui est en lien avec le processus,
+   tandis que la commande info thread liste les taches connues au sens thread (on peut avoir plusieurs threads par processus). D'ailleur, on remarque que certains
+   "trous" dans ps sont affichés dans info thread. Il semble donc y avoir du point de vue système, un identifiant différent pour chaque threads que celui du processus dont ils sont originaires.
+
+
+5) "continue" rend la main à la machine virtuelle et kgdb se bloque tant que la VM n'as pas terminé son exécution.
+
+
+6) une fois qu'on a fait "continue" avec kgdb et qu'on a débloqué la VM, si on écrit g dans /proc/sysrq-trigger, alors on repasse la main à kgdb.
+
+
+
+Exercice 2
+
+1) la structure est initialisée dans version-timestamp.c, mais est inclue dans version.c ensuite pour remplacer dans ce fichier les précédentes déclarations de
+init_uts_ns et linux_banner (déclarés avec __weak). A la toute fin, elle sera bien initialisée dans version.c.
+
+La structure est elle déclarée dans utsname.h.
+
+
+2) Le nom de machine est stocké dans name.sysname, de valeur UTS_SYSNAME ("Linux")
+
+set variable init_uts_ns.name.sysname = "Linouxe"
+(gdb) print init_uts_ns.name.sysname
+$3 = "Linouxe", '\000' <repeats 57 times>
+(gdb) continue
+-----
+[root@pnl ~]# uname   
+Linouxe
+
+Si on souhaite changer l'affiche de uname -r, alors il faut suivre le même principe sur un autre attribut:
+(gdb) print init_uts_ns.name.release
+$6 = "5.10.167", '\000' <repeats 56 times>
+
+
+
+Exercice 3
+
+1) Quand le module est chargé, il va créer un thread.
+Le thread va passer l'état du processus en TASK_UNINTERRUPTIBLE et dormir pendant 60 hz (se réveillera quand la condition associé à TASK_UNINTERRUPTIBLE sera valide).
+Si on cherche a retirer le module et que le thread tourne toujours, alors la fonction d'exit tentera de fermer le thread.
+
+
+2) Non le noyau ne crash pas, mais il y a quelques informations d'affichées:
+trace:
+root@pnl share]# insmod hanging.ko 
+[  102.676845] hanging: loading out-of-tree module taints kernel.
+[  102.678515] Hanging module loaded
+[root@pnl share]# [  151.062945] INFO: task my_hanging_fn:1628 blocked for more than 30 seconds.
+[  151.067121]       Tainted: G           O      5.10.167 #9
+[  151.069243] "echo 0 > /proc/sys/kernel/hung_task_timeout_secs" disables this message.
+[  151.069840] task:my_hanging_fn   state:D stack:15720 pid: 1628 ppid:     2 flags:0x00004080
+[  151.070498] Call Trace:
+[  151.070702]  __schedule+0x228/0x6c0
+[  151.070981]  schedule+0x41/0xb0
+[  151.071236]  ? 0xffffffffa0000000
+[  151.071490]  schedule_timeout+0x86/0x140
+[  151.071802]  ? __next_timer_interrupt+0x100/0x100
+[  151.072174]  my_hanging_fn+0x2f/0x51 [hanging]
+[  151.072519]  kthread+0x116/0x130
+[  151.072772]  ? __kthread_bind_mask+0x60/0x60
+[  151.073100]  ret_from_fork+0x22/0x30
+[  164.886591] done waiting
+
+Ce message est affiché car la tache my_hanging_fn (thread) est resté bloqué plus de 30 secondes (peut être réglé dans le .config).
+On remarque que l'état "state" à la valeur D, ce qui signifie qu'il était toujours TASK_UNINTERRUPTIBLE. C'est donc un timeout.
+
+3) il faut ajouter l'option "Detect Hung Tasks"
+trace:
+[root@pnl share]# [ 1290.208834] systemd-udevd (1555) used greatest stack depth: 13352 bytes left
+[ 1331.733504] INFO: task my_hanging_fn:1623 blocked for more than 30 seconds.
+[ 1331.737028]       Tainted: G           O      5.10.167 #13
+[ 1331.739736] "echo 0 > /proc/sys/kernel/hung_task_timeout_secs" disables this message.
+[ 1331.743570] task:my_hanging_fn   state:D stack:15720 pid: 1623 ppid:     2 flags:0x00004080
+[ 1331.747324] Call Trace:
+[ 1331.748200]  __schedule+0x228/0x6c0
+[ 1331.749319]  schedule+0x41/0xb0
+[ 1331.750202]  ? 0xffffffffa0000000
+[ 1331.751007]  schedule_timeout+0x86/0x140
+[ 1331.751898]  ? __next_timer_interrupt+0x100/0x100
+[ 1331.752895]  my_hanging_fn+0x2f/0x51 [hanging]
+[ 1331.753676]  kthread+0x116/0x130
+[ 1331.754246]  ? __kthread_bind_mask+0x60/0x60
+[ 1331.754997]  ret_from_fork+0x22/0x30
+[ 1331.755541] Kernel panic - not syncing: hung_task: blocked tasks
+[ 1331.756241] CPU: 0 PID: 256 Comm: khungtaskd Tainted: G           O      5.10.167 #13
+[ 1331.757126] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+[ 1331.758019] Call Trace:
+[ 1331.758229]  dump_stack+0x57/0x6e
+[ 1331.758507]  panic+0x109/0x2e5
+[ 1331.758755]  ? ret_from_fork+0x2d/0x30
+[ 1331.759058]  watchdog.cold+0xc/0xb5
+[ 1331.759341]  ? hungtask_pm_notify+0x40/0x40
+[ 1331.759673]  kthread+0x116/0x130
+[ 1331.759935]  ? __kthread_bind_mask+0x60/0x60
+[ 1331.760273]  ret_from_fork+0x22/0x30
+
+--> KGBD est re-disponible
+
+
+4) Non, cela ne correspond pas.
+trace:
+(gdb) backtrace
+#0  kgdb_breakpoint () at kernel/debug/debug_core.c:1259
+#1  0xffffffff81ba305e in panic (fmt=fmt@entry=0xffffffff82233abf "hung_task: blocked tasks") at kernel/panic.c:316
+#2  0xffffffff81ba99f8 in check_hung_uninterruptible_tasks (timeout=<optimized out>) at kernel/hung_task.c:213
+#3  watchdog (dummy=<optimized out>) at kernel/hung_task.c:294
+#4  0xffffffff8108a746 in kthread (_create=0xffff888003ba7b80) at kernel/kthread.c:313
+#5  0xffffffff810018b2 in ret_from_fork () at arch/x86/entry/entry_64.S:299
+#6  0x0000000000000000 in ?? ()
+
+
+5) 
+monitor ps:
+0xffff888004176a00     1623        2  0    0   D  0xffff888004177440  my_hanging_fn
+
+monitor btp 1623:
+Stack traceback for pid 1623
+0xffff888004176a00     1623        2  0    0   D  0xffff888004177440  my_hanging_fn
+Call Trace:
+__schedule+0x228/0x6c0
+schedule+0x41/0xb0
+? 0xffffffffa0000000
+schedule_timeout+0x86/0x140
+? __next_timer_interrupt+0x100/0x100
+my_hanging_fn+0x2f/0x51 [hanging]
+kthread+0x116/0x130
+? __kthread_bind_mask+0x60/0x60
+ret_from_fork+0x22/0x30
+
+
+6) 
+monitor lsmod:
+Module                  Size  modstruct     Used by
+hanging                16384  0xffffffffa0002000    0  (Live) 0xffffffffa0000000 [ ]
+
+La seconde adresse semble être associée au segment text du module:
+[root@pnl share]# cd /sys/module/hanging/sections/
+[root@pnl sections]# ls -a
+.     .exit.text                 .note.Linux         .orc_unwind_ip  .strtab
+..    .gnu.linkonce.this_module  .note.gnu.build-id  .return_sites   .symtab
+.bss  .init.text                 .orc_unwind         .rodata.str1.1  .text
+[root@pnl sections]# cat .text 
+0xffffffffa0000000
+
+
+7)
+* On peut changer TASK_UNINTERRUPTIBLE en TASK_INTERRUPTIBLE, et le kernel ne part pas en panic, les ~60 secondes sont bien notifiés.
+* On peut augmenter dans la config le temps maximal avant timeout (passer de 30 à un peu plus de 60 secondes).
+
+
+
+Exercice 4
+
+1) 
+[root@pnl share]# cat /sys/kernel/debug/dynamic_debug/control | grep prdebug 
+/home/hellyiard/Cours/Master/Master1/cours/PNL/td-tp/tp5/TP-05/EXO-04/prdebug.c:19 [prdebug]prdebug_timeout =_ "reactivating timer\012"
+/home/hellyiard/Cours/Master/Master1/cours/PNL/td-tp/tp5/TP-05/EXO-04/prdebug.c:16 [prdebug]prdebug_timeout =_ "nr irqs %lu\012"
+
+Le debug dynamique ne semble pas actif sur le module.
+
+extrait de la doc:
+-----
+The flags are::
+
+  p    enables the pr_debug() callsite.
+  _    enables no flags.
+-----
+
+2)  echo -n va modifier le fichier control en écrivant 'p' juste après le '=' aux lignes dont le nom du module apparait.
+-n empeche l'ajout du caractère '\n'
+
+
+3)
+-----
+The flags specification comprises a change operation followed
+by one or more flag characters.  The change operation is one
+of the characters::
+
+  -    remove the given flags
+  +    add the given flags
+  =    set the flags to the given flags
+
+The flags are::
+
+  p    enables the pr_debug() callsite.
+  _    enables no flags.
+
+  Decorator flags add to the message-prefix, in order:
+  t    Include thread ID, or <intr>
+  m    Include module name
+  f    Include the function name
+  l    Include line number
+-----
+
+trace:
+[root@pnl share]# echo -n 'module prdebug =plfm' > /sys/kernel/debug/dynamic_debug/control
+[root@pnl share]# dmesg | tail
+[ 1458.322381] prdebug:prdebug_timeout:16: nr irqs 8
+[ 1458.322388] prdebug:prdebug_timeout:19: reactivating timer
+[ 1459.346417] prdebug:prdebug_timeout:16: nr irqs 15
+[ 1459.346425] prdebug:prdebug_timeout:19: reactivating timer
+[ 1460.370346] prdebug:prdebug_timeout:16: nr irqs 18
+[ 1460.370354] prdebug:prdebug_timeout:19: reactivating timer
+[ 1461.394237] prdebug:prdebug_timeout:16: nr irqs 86
+[ 1461.394243] prdebug:prdebug_timeout:19: reactivating timer
+[ 1462.418169] prdebug:prdebug_timeout:16: nr irqs 23
+[ 1462.418174] prdebug:prdebug_timeout:19: reactivating timer
+
+
+4) trace:
+[root@pnl share]# echo -n 'module prdebug line 16 +p' > /sys/kernel/debug/dynamic_debug/control
+[root@pnl share]# cat /sys/kernel/debug/dynamic_debug/control | grep prdebug
+/home/hellyiard/Cours/Master/Master1/cours/PNL/td-tp/tp5/TP-05/EXO-04/prdebug.c:19 [prdebug]prdebug_timeout =_ "reactivating timer\012"
+/home/hellyiard/Cours/Master/Master1/cours/PNL/td-tp/tp5/TP-05/EXO-04/prdebug.c:16 [prdebug]prdebug_timeout =p "nr irqs %lu\012"
+[root@pnl share]# dmesg | tail
+[ 2165.522391] nr irqs 12
+[ 2166.546238] nr irqs 5
+[ 2167.570403] nr irqs 8
+[ 2168.594410] nr irqs 0
+[ 2169.618206] nr irqs 23
+[ 2170.642345] nr irqs 19
+[ 2171.666400] nr irqs 3
+[ 2172.690232] nr irqs 15
+[ 2173.714397] nr irqs 13
+[ 2174.738403] nr irqs 0
+
+On remarque que dans le fichier control, la ligne 16 du module prdebug est la seul à avoir été atteinte par la modification.
+
+
+
+Exercice 5)
+
+1) le thread va s'exécuter tant qu'on ne tente pas de fermer le module (qui fera réagir la condition kthread_should_stop()).
+à chaque tour de boucle, les statistiques sont sauvegardés et après un certain inverval de temps, les informations sont affichés.
+
+
+2) Le noyau crash et on remarque dans l'affichage un 'Oops' (j'ai vue une option dans le kernel debug avec make nconfig)
+
+
+3)
+trace:
+(gdb) add-symbol-file kcpustat.o 0xffffffffa0000000
+add symbol table from file "kcpustat.o" at
+        .text_addr = 0xffffffffa0000000
+(y or n) y
+Reading symbols from kcpustat.o...
+
+(gdb) backtrace
+#0  0xffffffffa0000204 in print_stats () at /home/hellyiard/Cours/Master/Master1/cours/PNL/td-tp/tp5/TP-05/EXO-05/kcpustat.c:75
+#1  0xffffffffa000029e in my_kcpustat_fn (data=<optimized out>) at /home/hellyiard/Cours/Master/Master1/cours/PNL/td-tp/tp5/TP-05/EXO-05/kcpustat.c:102
+#2  0xffffffff8108a736 in kthread (_create=0xffff888007155340) at kernel/kthread.c:313
+#3  0xffffffff810018b2 in ret_from_fork () at arch/x86/entry/entry_64.S:299
+#4  0x0000000000000000 in ?? ()
+
+(gdb) monitor bt
+Stack traceback for pid 1617
+0xffff888003ff9a00     1617        2  1    0   R  0xffff888003ffa400 *my_kcpustat_fn
+CPU: 0 PID: 1617 Comm: my_kcpustat_fn Tainted: G           O      5.10.167 #15
+Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+Call Trace:
+ dump_stack+0x57/0x6e
+ kdb_show_stack+0x76/0x90
+ kdb_bt1+0xb7/0x130
+ kdb_bt+0x345/0x3b0
+ kdb_parse+0x41c/0x6e0
+ ? wait_for_xmitr+0x3b/0xa0
+ ? io_serial_in+0x20/0x20
+ gdb_serial_stub+0xe04/0xea0
+ ? __switch_to_asm+0x50/0x60
+ kgdb_cpu_enter+0x379/0x590
+ kgdb_handle_exception+0xb1/0x100
+ __kgdb_notify+0x2b/0x80
+ ? print_stats+0xb4/0xf0 [kcpustat]
+ kgdb_notify+0xc/0x20
+ notify_die+0x6a/0xb0
+ ? search_extable+0x22/0x30
+ exc_general_protection+0x13d/0x3e0
+ ? update_blocked_averages+0x1b0/0x4f0
+ asm_exc_general_protection+0x1e/0x30
+RIP: 0010:print_stats+0xb4/0xf0 [kcpustat]
+Code: 3b 48 8b 0d 1e 1e 00 00 4c 89 43 08 48 81 f9 00 20 00 a0 0f 84 ba 00 00 00 31 d2 49 c7 c1 00 20 00 a0 31 c0 eb 04 48 8b 14 06 <48> 03 54 01 10 48 89 14 06 48 83 c0 08 48 83 f8 50 75 e9 48 8b 11
+RSP: 0018:ffffc9000021fe90 EFLAGS: 00010246
+RAX: 0000000000000000 RBX: ffff888005e1fae0 RCX: dead000000000100
+RDX: 0000000000000000 RSI: ffffc9000021fe90 RDI: dead000000000100
+RBP: 000000000000000a R08: dead000000000122 R09: ffffffffa0002000
+R10: 0000000000000000 R11: 000000000000000f R12: ffff888007155340
+R13: ffffc90000203d20 R14: 0000000000000000 R15: ffff888003ff9a00
+ my_kcpustat_fn+0x5e/0x6d [kcpustat]
+ ? print_stats+0xf0/0xf0 [kcpustat]
+ kthread+0x116/0x130
+ ? __kthread_bind_mask+0x60/0x60
+ ret_from_fork+0x22/0x30
+
+De plus, au moment du crash, kgdb nous a donné l'information suivante:
+Thread 59 received signal SIGSEGV, Segmentation fault.
+Il semble que le problème vienne de la ligne 75 dans la fonction print_stats().
+
+Cependant,
+(gdb) print k
+$2 = (struct my_kcpustat *) 0xdead000000000100  //liste "empoisonnée"
+(gdb) print sum
+$3 = {cpustat = {0, 0, 1000000, 0, 0, 1012000000, 0, 0, 0, 0}}
+
+On peut en conclure que le problème vient de list_del (ligne 76) dans list_for_each_entry:
+après del_list, les pointeurs gauche et droite du noeud pointent sur une macro POISON_LIST.
+0x"dead" vient de ILLEGAL_POINTER_VALUE et le "100" est du au #define LIST_POISON1.
+
+LIST_POINSON1 est placé dans list->next et list_for_each_entry se base sur le next pour le parcour de la liste,
+il y aura donc un problème dans cette portion de code.
+
+
+4)
+Une solution est d'utiliser une autre macro d'iteration, qui prend en considération les del_list:
+#define list_for_each_entry_safe(pos, n, head, member) qui va stocker dans une autre variable temporaire, le pointeur du next.
+
+Une autre est peut-être de changer 'k' et de lui remettre une autre valeur. Comme on supprime les chainons de la liste et qu'on fait des additions, on pourrait repartir de début->next:
+k = container_of((&my_head)->next, typeof(*k), list)
+
+
+5) le kernel ne répond toujours pas après la modification.
+Cependant, une ligne de print_stats est quand même affichée et utiliser add-symbol-file ne semble plus être possible.
+Le problème vient d'une list_head (certainement de my_head ?).
+
+
+6) 
+trace:
+[root@pnl share]# [   90.193326] usr 0 sys 1000000 idle 9238000000 iowait 17000000 irq 0 softirq 0
+[   90.193782] ------------[ cut here ]------------
+[   90.194047] list_del corruption, ffff88800360cb40->next is LIST_POISON1 (dead000000000100)
+[   90.194523] WARNING: CPU: 0 PID: 1626 at lib/list_debug.c:53 __list_del_entry_valid+0x83/0xe0
+[   90.194983] Modules linked in: kcpustat(O)
+[   90.195212] CPU: 0 PID: 1626 Comm: my_kcpustat_fn Tainted: G           O      5.10.167 #16
+[   90.195656] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+[   90.196107] RIP: 0010:__list_del_entry_valid+0x83/0xe0
+[   90.196390] Code: 0f 0b 31 c0 c3 cc cc cc cc 48 c7 c7 e0 ea 45 82 e8 ca 28 78 00 0f 0b 31 c0 c3 cc cc cc cc 48 c7 c7 08 eb 45 82 e8 b5 28 78 00 <0f> 0b 31 c0 c3 cc cc cc cc 4c 89 c2 48 c7 c7 40 eb 45 82 e8 9d 28
+[   90.197422] RSP: 0018:ffffc9000020be48 EFLAGS: 00010286
+[   90.197724] RAX: 0000000000000000 RBX: ffff88800360cb40 RCX: 0000000000000000
+[   90.198108] RDX: ffff88807dc2a9d0 RSI: ffff88807dc1b8e0 RDI: ffff88807dc1b8e0
+[   90.198492] RBP: dead000000000122 R08: ffffffff82730808 R09: 00000000ffffdfff
+[   90.198877] R10: ffffffff82650820 R11: ffffffff82650820 R12: ffff88800360cb40
+[   90.199261] R13: ffffc9000020be68 R14: ffffffffa0002000 R15: ffffffffa0002000
+[   90.199644] FS:  0000000000000000(0000) GS:ffff88807dc00000(0000) knlGS:0000000000000000
+[   90.200079] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[   90.200399] CR2: 0000564ab6c0dcf8 CR3: 00000000066d8000 CR4: 00000000000006f0
+[   90.200808] Call Trace:
+[   90.200964]  __list_del_entry+0x9/0x30 [kcpustat]
+[   90.201230]  print_stats.cold+0x30/0x92 [kcpustat]
+[   90.201496]  my_kcpustat_fn+0x5e/0x6d [kcpustat]
+[   90.201752]  ? print_stats+0x130/0x130 [kcpustat]
+[   90.202008]  kthread+0x116/0x130
+[   90.202196]  ? __kthread_bind_mask+0x60/0x60
+[   90.202432]  ret_from_fork+0x22/0x30
+[   90.202629] ---[ end trace 235d5e971837cea9 ]---
+[  100.433442] usr 0 sys 0 idle 9198000000 iowait 18000000 irq 0 softirq 0
+[  100.433891] ------------[ cut here ]------------
+[  100.434262] list_del corruption, ffff88800360ca80->next is LIST_POISON1 (dead000000000100)
+[  100.434896] WARNING: CPU: 0 PID: 1626 at lib/list_debug.c:53 __list_del_entry_valid+0x83/0xe0
+[  100.435518] Modules linked in: kcpustat(O)
+[  100.435831] CPU: 0 PID: 1626 Comm: my_kcpustat_fn Tainted: G        W  O      5.10.167 #16
+[  100.436434] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+[  100.437043] RIP: 0010:__list_del_entry_valid+0x83/0xe0
+[  100.437424] Code: 0f 0b 31 c0 c3 cc cc cc cc 48 c7 c7 e0 ea 45 82 e8 ca 28 78 00 0f 0b 31 c0 c3 cc cc cc cc 48 c7 c7 08 eb 45 82 e8 b5 28 78 00 <0f> 0b 31 c0 c3 cc cc cc cc 4c 89 c2 48 c7 c7 40 eb 45 82 e8 9d 28
+[  100.438735] RSP: 0018:ffffc9000020be48 EFLAGS: 00010286
+[  100.439119] RAX: 0000000000000000 RBX: ffff88800360ca80 RCX: 0000000000000027
+[  100.439639] RDX: ffff88807dc1b8e8 RSI: 0000000000000001 RDI: ffff88807dc1b8e0
+[  100.440160] RBP: dead000000000122 R08: ffffffff82730808 R09: 00000000ffffdfff
+[  100.440685] R10: ffffffff82650820 R11: ffffffff82650820 R12: ffff88800360ca80
+[  100.441208] R13: ffffc9000020be68 R14: ffffffffa0002000 R15: ffffffffa0002000
+[  100.441736] FS:  0000000000000000(0000) GS:ffff88807dc00000(0000) knlGS:0000000000000000
+[  100.442348] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[  100.442773] CR2: 00007fb3721639b8 CR3: 0000000005426000 CR4: 00000000000006f0
+[  100.443295] Call Trace:
+[  100.443485]  __list_del_entry+0x9/0x30 [kcpustat]
+[  100.443833]  print_stats.cold+0x30/0x92 [kcpustat]
+[  100.444180]  my_kcpustat_fn+0x5e/0x6d [kcpustat]
+[  100.444525]  ? print_stats+0x130/0x130 [kcpustat]
+[  100.444881]  kthread+0x116/0x130
+[  100.445128]  ? __kthread_bind_mask+0x60/0x60
+[  100.445453]  ret_from_fork+0x22/0x30
+[  100.445723] ---[ end trace 235d5e971837ceaa ]---
+
+
+On remarque en particulier ces ligne de la trace:
+*   __list_del_entry+0x9/0x30 [kcpustat]
+
+La ligne suivante montre que la fonction appelé n'est pas dans list mais list_debug:
+  on le remarque dans list.h avec #ifdef CONFIG_DEBUG_LIST
+*   [  100.434896] WARNING: CPU: 0 PID: 1626 at lib/list_debug.c:53 __list_del_entry_valid+0x83/0xe0
+*   __list_del_entry est appelé par del_list. Cela explique aussi qu'une ligne soit affichée.
+
+De plus, la trace explique une corruption par list_del avec LIST_POISON1.
+La fonction __list_del_entry_valid de debug affiche bien le cas CHECK_DATA_CORRUPTION(next == LIST_POINSON1).
+
+Le problème est donc lié aux deux del_list sur first, car au deuxième coup next et prev sont déjà corrompu
+Il faut donc retirer l'appel à la fin de la fonction.
+
+
+7) Il faut activer kmemleak: "Kernel memory leak detector"
+On utilise echo scan / clear pour demander un scan ou clear le fichier
+/sys/kernel/debug/kmemleak
+
+8)
+Le problème vient du fait que kzalloc alloue de la mémoire et elle n'est jamais libéré avant les suppressions dans la liste. il faut donc le faire
+avec kfree(ptr) dans print_stats() après les del_list.

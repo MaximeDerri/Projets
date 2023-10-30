@@ -1,0 +1,212 @@
+NOTE: je suis inscrit dans l'UE IOC (anciennement PERI), je vais suivre la convention de nommage qu'on a vue pour
+les commandes d'ioctl
+
+Exercice 1
+
+1) J'ai fais deux façon de lire: une en créant un nouveau kobject (en commentaire), et l'autre avec kernel_kobj
+
+trace:
+[root@pnl share]# cat /sys/kernel/hello 
+Hello sysfs!
+[root@pnl share]# cat /sys/kernel/hello 
+Hello sysfs!
+[root@pnl share]# cat /sys/kernel/hello 
+Hello sysfs!
+
+Non, le fichier ne contient pas directement cette chaine. hello_show est appelé à chaque tentative de lecture et écrit dans le buffer ~ fichier. donc à chaque essaie, le contenu change
+-r--r--r-- 1 root root 4096 Mar 23 20:18 /sys/kernel/hello
+nous affiche 4096, mais c'est du au fait que le fichier fait la taille d'une page (PAGE_SIZE).
+
+
+2) On ajoute un buffer (tableau) static de la taille d'une page pour se souvenir des store
+trace:
+[root@pnl share]# cat /sys/kernel/hello 
+Hello sysfs!
+[root@pnl share]# echo -n truc > /sys/kernel/hello 
+[root@pnl share]# cat /sys/kernel/hello 
+Hello truc!
+
+
+
+
+Exercice 2
+
+1)
+trace:
+[root@pnl share]# insmod helloioctl.ko
+[   35.360335] init
+[root@pnl share]# 
+[root@pnl share]# cat /proc/devices | grep hello
+248 hello
+[root@pnl share]# mknod /dev/hello c 248 0
+[root@pnl share]# ls -l /dev/ | grep hello
+crw-r--r-- 1 root root    248,   0 Mar 23 22:36 hello
+
+Le driver est bien présent
+
+
+2) 
+trace:
+[root@pnl share]# insmod helloioctl.ko 
+[ 3977.551442] init
+[root@pnl share]# ./usr_ioctl 
+rec = Hello ioctl!
+
+On définit dans un fichier header une macro HELLO_IOCG qui permet d'avoir la commande déjà prete, assemblée par _IOR.
+cmd est une concaténation sur 32 bits de: le sens (lecture/ecriture), le type (magic number), la taille et un numero d'ordre
+L'argument n'est pas un pointeur mais il contient l'adresse où écrire avec copy_to_user, on le cast donc en pointeur pour
+écrire.
+Une solution classique pour la définition d'ioctl d'un driver est de faire le test sur le nombre magique, puis de faire
+un switch sur la commande afin de traiter différents cas. On traite les mauvaises commandes dans default.
+
+Le programme utilisateur ouvre le fichier situé dans /dev/ et envoie la commande avec ioctl
+
+
+3) On définit une nouvelle macro qui permet d'envoyer un nouvelle requete au driver (sens de lecture = ecriture)
+
+Dans cette question, j'ai essayé quelque chose d'un peu différent de la question initiale:
+- j'ai utilisé le champ private_data qui sert à stocker des valeurs privées pour le fichier ouvert. Alloué avec kmalloc et libéré au moment du release (kfree), quand le dernier close sur le fichier à lieu.
+- Pour le rendre équivalent à l'exercice, il faut déclarer un buffer de caractère et l'utiliser à la place de private_data (et kmalloc / kfree).
+
+Voici un exemple d'affichage:
+[root@pnl share]# ./usr_ioctl abcdef_MESSAGE_TEST
+rec = Hello helloioctl
+rec = Hello abcdef_MESSAGE_TEST
+
+ordre des commandes:
+HELLO_IOCG - get
+HELLO_IOCS - set
+HELLO_IOCG - get
+
+
+
+Exercice 3
+
+1) La structure pid est utilisé par le noyau en tant qu'identifiant de processus.
+Le noyau passe par une structure plutôt que directement le pid numérique car il pourrait arriver qu'un pid soit attribué plusieurs fois à différents processus (quand il a été libéré après avoir exit).
+Pour éviter de les confondre et poser problème, le noyau recréer une nouvelle structure pid.
+
+
+2) Le temps est compté par ticks, en nanosecondes. (kernel/sched/cputime, fonction account_process_tick)
+
+
+3) 
+* Le noyau ne référence pas directement les processus en utilisant la struct task_struct, car la structure peut être encore conservée.
+L'intéret de passer par la struct pid, c'est qu'elle consomme environ 64 octets de l'espace du noyau plutôt qu'environ 10K pour la struct task_struct + la pile.
+
+* Les struct task_struct ont comme attribut une struct pid
+
+* On peut retrouver la struct task_struct par la struct pid et inversement (fonctions get_pid_task et get_task_pid)
+
+
+Exercice 4
+
+1)
+[root@pnl share]# insmod taskmonitor.ko process_id=1
+[  230.200615] init
+[root@pnl share]# dmesg | tail
+    ...
+[  230.200615] init
+
+[root@pnl share]# insmod taskmonitor.ko process_id=1234
+[  308.044216] init
+insmod: ERROR: could not insert module taskmonitor.ko: Module has wrong symbol version
+[root@pnl share]# dmesg | tail
+    ...
+[  308.044216] init
+[  308.045476] struct pid not found
+
+
+2) On doit rendre la référence de la struct pid quand on en a plus besoin. Donc tant qu'on surveille, on garde la référence.
+Si monitor_pid termine et que le module ne fait absolument plus rien derrière, alors on peut rendre la référence à la fin de la fonction, sinon
+on la garde et on la rend plus tard (maximum au déchargement du module).
+
+
+3) On utilise le même principe de gestion des kthread qu'aux TPs précédent, en ajoutant des vérifications d'erreurs, et les pu_X au bon endroits (on libère la ref de la task_struct dans la fonction exec
+par le thread).
+
+
+
+Exercice 5
+
+1) mon module prend par défaut le pid 1
+trace:
+[root@pnl share]# insmod taskmonitor.ko 
+[root@pnl share]# cat /sys/kernel/taskmonitor 
+pid 1 usr 38000000 sys 633000000
+
+
+2) pour store, on récupère dans le buffer la chaine et on fait une comparaison pour traiter les cas, avec strcmp.
+trace:
+[root@pnl share]# insmod taskmonitor.ko 
+[root@pnl share]# dmesg | tail
+[ 3421.703285] exit module
+[ 3422.798039] init module
+[ 3437.668558] exit module
+[ 5736.968519] init
+[ 5736.975265] pid 1 usr 88000000 sys 678000000
+[ 5738.007395] pid 1 usr 88000000 sys 678000000
+[ 5739.031393] pid 1 usr 88000000 sys 678000000
+[ 5740.055247] pid 1 usr 88000000 sys 678000000
+[ 5741.079407] pid 1 usr 88000000 sys 678000000
+[ 5742.103411] pid 1 usr 88000000 sys 678000000
+[root@pnl share]# dmesg | tail
+[ 5736.968519] init
+[ 5736.975265] pid 1 usr 88000000 sys 678000000
+[ 5738.007395] pid 1 usr 88000000 sys 678000000
+[ 5739.031393] pid 1 usr 88000000 sys 678000000
+[ 5740.055247] pid 1 usr 88000000 sys 678000000
+[ 5741.079407] pid 1 usr 88000000 sys 678000000
+[ 5742.103411] pid 1 usr 88000000 sys 678000000
+[ 5743.127467] pid 1 usr 88000000 sys 678000000
+[ 5744.151402] pid 1 usr 88000000 sys 678000000
+[ 5745.175223] pid 1 usr 88000000 sys 678000000
+[root@pnl share]# echo stop > /sys/kernel/taskmonitor 
+[root@pnl share]# echo stop > /sys/kernel/taskmonitor 
+[root@pnl share]# dmesg | tail
+[ 5766.679410] pid 1 usr 89000000 sys 678000000
+[ 5767.703424] pid 1 usr 89000000 sys 678000000
+[ 5768.727418] pid 1 usr 89000000 sys 678000000
+[ 5769.751419] pid 1 usr 89000000 sys 678000000
+[ 5770.775384] pid 1 usr 89000000 sys 678000000
+[ 5771.799419] pid 1 usr 89000000 sys 678000000
+[ 5772.823480] pid 1 usr 89000000 sys 678000000
+[ 5773.848255] pid 1 usr 89000000 sys 678000000
+[ 5773.991340] thread was killed
+[ 5777.366294] thread is already dead
+[root@pnl share]# cat /sys/kernel/taskmonitor 
+pid 1 usr 89000000 sys 678000000
+[root@pnl share]# echo start > /sys/kernel/taskmonitor 
+[root@pnl share]# echo start > /sys/kernel/taskmonitor 
+[root@pnl share]# dmesg | tail
+[ 5832.421322] thread was created
+[ 5832.424506] pid 1 usr 90000000 sys 678000000
+[ 5833.431423] pid 1 usr 90000000 sys 678000000
+[ 5833.870697] thread is already running
+[ 5834.455431] pid 1 usr 90000000 sys 678000000
+[ 5835.479417] pid 1 usr 90000000 sys 678000000
+[ 5836.503422] pid 1 usr 90000000 sys 678000000
+[ 5837.527441] pid 1 usr 90000000 sys 678000000
+[ 5838.551382] pid 1 usr 90000000 sys 678000000
+[ 5839.575399] pid 1 usr 90000000 sys 678000000
+
+
+
+Exercice 6
+
+1) comme l'exercice précédent avec ioctl (struct file_operation, chrdev reg/unreg, ...)
+On reutilise aussi le nombre magique 'N'
+
+
+2) l'implémentation des deux cas est assez similaire, on créer une struct/buff temporaire
+pour préparer l'envoie, puis on envoie les données avec copy_to_user
+
+
+3) Semblable à l'exercice 5, mais par ioctl et un match/case avec le switch
+
+
+4) Pour éviter des problèmes au niveau des structures, j'ai ajouté de l'exclusion mutuelle.
+En ayant chercher dans la doc, j'ai découvert qu'on pouvait utiliser linux/mutex.h.
+
+Le problème est qu'ioctl et le thread pourraient accéder en même temps a get_sample
+et au changement de pid (passage par NULL). Pour éviter ça, j'ai utilisé un mutex.
