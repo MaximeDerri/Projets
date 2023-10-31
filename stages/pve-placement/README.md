@@ -25,7 +25,7 @@ Il y a deux points à réaliser:
 les autres noeuds.
 - Pouvoir proposer un nouveau schéma d'organisation des noeuds d'un cluster afin d'optimiser les ressources.
 
-Les migrations doivent être limités afin de réduire le coût des transferts.
+Les migrations doivent être limitées afin de réduire le coût des transferts.
 
 
 ## Utilisation de l'outil
